@@ -129,7 +129,6 @@ class ir_translation_import_cursor(object):
         find_expr = """
                 irt.lang = ti.lang
             AND irt.type = ti.type
-            AND irt.module = ti.module
             AND irt.name = ti.name
             AND (
                     (ti.type = 'model' AND ti.res_id = irt.res_id AND irt.src = ti.src)
@@ -193,7 +192,9 @@ class ir_translation(osv.osv):
                 model = self.pool.get(model_name)
                 if model is None:
                     continue
-                field = model._fields[field_name]
+                field = model._fields.get(field_name)
+                if field is None:
+                    continue
                 if not callable(field.translate):
                     # Pass context without lang, need to read real stored field, not translation
                     context_no_lang = dict(context, lang=None)
@@ -600,7 +601,7 @@ class ir_translation(osv.osv):
                         FROM res_lang l
                         WHERE l.code != 'en_US' AND NOT EXISTS (
                             SELECT 1 FROM ir_translation
-                            WHERE lang=l.code AND type='model' AND name=%(name)s AND res_id=%(res_id)s AND module=%(module)s
+                            WHERE lang=l.code AND type='model' AND name=%(name)s AND res_id=%(res_id)s
                         );
                         UPDATE ir_translation SET src=%(src)s
                         WHERE type='model' AND name=%(name)s AND res_id=%(res_id)s AND module=%(module)s;
@@ -671,12 +672,13 @@ class ir_translation(osv.osv):
         return ir_translation_import_cursor(cr, uid, self, context=context)
 
     def load_module_terms(self, cr, modules, langs, context=None):
-        context = dict(context or {}) # local copy
+        context_template = dict(context or {}) # local copy
         for module_name in modules:
             modpath = openerp.modules.get_module_path(module_name)
             if not modpath:
                 continue
             for lang in langs:
+                context = dict(context_template)
                 lang_code = tools.get_iso_codes(lang)
                 base_lang_code = None
                 if '_' in lang_code:
@@ -710,3 +712,29 @@ class ir_translation(osv.osv):
                     _logger.info('module %s: loading extra translation file (%s) for language %s', module_name, lang_code, lang)
                     tools.trans_load(cr, trans_extra_file, lang, verbose=False, module_name=module_name, context=context)
         return True
+
+    @api.model
+    def get_technical_translations(self, model_name):
+        """ Find the translations for the fields of `model_name`
+
+        Find the technical translations for the fields of the model, including
+        string, tooltip and available selections.
+
+        :return: action definition to open the list of available translations
+        """
+        fields = self.env['ir.model.fields'].search([('model', '=', model_name)])
+        view = self.env.ref("base.view_translation_tree", False)
+        return {
+            'name': _("Technical Translation"),
+            'view_mode': 'tree',
+            'views': [(view and view.id or False, "list")],
+            'res_model': 'ir.translation',
+            'type': 'ir.actions.act_window',
+            'domain': ['|',
+                            '&',('type', '=', 'model'),
+                                '&',('res_id', 'in', fields.ids),
+                                    ('name', 'like', 'ir.model.fields,'),
+                            '&',('type', '=', 'selection'),
+                                ('name', 'like', model_name+','),
+                    ],
+        }
