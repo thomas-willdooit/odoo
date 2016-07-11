@@ -337,7 +337,7 @@ class AccountMoveLine(models.Model):
             if (line.account_id.code != self.account_id.code):
                 counterpart.add(line.account_id.code)
         if len(counterpart) > 2:
-            counterpart = counterpart[0:2] + ["..."]
+            counterpart = list(counterpart)[0:2] + ["..."]
         self.counterpart = ",".join(counterpart)
 
     name = fields.Char(required=True, string="Label")
@@ -675,7 +675,7 @@ class AccountMoveLine(models.Model):
             line_currency = (line.currency_id and line.amount_currency) and line.currency_id or company_currency
             amount_currency_str = ""
             total_amount_currency_str = ""
-            if line_currency != company_currency:
+            if line_currency != company_currency and target_currency != company_currency:
                 total_amount = line.amount_currency
                 actual_debit = debit > 0 and amount_currency or 0.0
                 actual_credit = credit > 0 and -amount_currency or 0.0
@@ -683,7 +683,7 @@ class AccountMoveLine(models.Model):
                 total_amount = abs(debit - credit)
                 actual_debit = debit > 0 and amount or 0.0
                 actual_credit = credit > 0 and -amount or 0.0
-            if line_currency != target_currency:
+            if line_currency != target_currency and target_currency != company_currency:
                 amount_currency_str = formatLang(self.env, abs(actual_debit or actual_credit), currency_obj=line_currency)
                 total_amount_currency_str = formatLang(self.env, total_amount, currency_obj=line_currency)
                 ctx = context.copy()
@@ -759,6 +759,10 @@ class AccountMoveLine(models.Model):
             #or if all lines share the same currency
             field = 'amount_residual_currency'
             rounding = self[0].currency_id.rounding
+        if self._context.get('skip_full_reconcile_check') == 'amount_currency_excluded':
+            field = 'amount_residual'
+        elif self._context.get('skip_full_reconcile_check') == 'amount_currency_only':
+            field = 'amount_residual_currency'
         #target the pair of move in self that are the oldest
         sorted_moves = sorted(self, key=lambda a: a.date)
         debit = credit = False
@@ -1075,8 +1079,11 @@ class AccountMoveLine(models.Model):
                     }
                     bank = self.env["account.bank.statement"].browse(vals.get('statement_id'))
                     if bank.currency_id != bank.company_id.currency_id:
+                        ctx = {}
+                        if 'date' in vals:
+                            ctx['date'] = vals['date']
                         temp['currency_id'] = bank.currency_id.id
-                        temp['amount_currency'] = bank.company_id.currency_id.compute(tax_vals['amount'], bank.currency_id, round=True)
+                        temp['amount_currency'] = bank.company_id.currency_id.with_context(ctx).compute(tax_vals['amount'], bank.currency_id, round=True)
                     tax_lines_vals.append(temp)
 
         new_line = super(AccountMoveLine, self).create(vals)
