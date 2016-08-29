@@ -1554,12 +1554,18 @@ class stock_picking(models.Model):
 
     def rereserve_quants(self, cr, uid, picking, move_ids=[], context=None):
         """ Unreserve quants then try to reassign quants."""
+        if context is None:
+            context = {}
         stock_move_obj = self.pool.get('stock.move')
         if not move_ids:
             self.do_unreserve(cr, uid, [picking.id], context=context)
             self.action_assign(cr, uid, [picking.id], context=context)
         else:
-            stock_move_obj.do_unreserve(cr, uid, move_ids, context=context)
+            if 'no_state_change' in context:
+                move = stock_move_obj.browse(cr, uid, move_ids, context=context)
+                stock_move_obj.do_unreserve(cr, uid, [m.id for m in move if m.reserved_quant_ids], context=context)
+            else:
+                stock_move_obj.do_unreserve(cr, uid, move_ids, context=context)
             stock_move_obj.action_assign(cr, uid, move_ids, no_prepare=True, context=context)
 
     def do_new_transfer(self, cr, uid, ids, context=None):
@@ -2627,6 +2633,8 @@ class stock_move(osv.osv):
         operations = set()
         move_qty = {}
         for move in self.browse(cr, uid, ids, context=context):
+            if move.picking_id:
+                pickings.add(move.picking_id.id)
             move_qty[move.id] = move.product_qty
             for link in move.linked_move_operation_ids:
                 operations.add(link.operation_id)
@@ -4892,11 +4900,6 @@ class stock_picking_type(osv.osv):
             name = record.name
             if record.warehouse_id:
                 name = record.warehouse_id.name + ': ' +name
-            if context.get('special_shortened_wh_name'):
-                if record.warehouse_id:
-                    name = record.warehouse_id.name
-                else:
-                    name = _('Customer') + ' (' + record.name + ')'
             res.append((record.id, name))
         return res
 
